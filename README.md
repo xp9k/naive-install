@@ -15,13 +15,13 @@
 Одной командой:
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/USER/naive-install/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/xp9k/naive-install/main/install.sh)
 ```
 
 Или:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/USER/naive-install/main/install.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/xp9k/naive-install/main/install.sh)
 ```
 
 ## Что делает скрипт
@@ -37,7 +37,7 @@ bash <(wget -qO- https://raw.githubusercontent.com/USER/naive-install/main/insta
 ## Удаление
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/USER/naive-install/main/install.sh) uninstall
+bash <(curl -sL https://raw.githubusercontent.com/xp9k/naive-install/main/install.sh) uninstall
 ```
 
 Или на уже установленном сервере:
