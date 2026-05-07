@@ -22,6 +22,7 @@ CADDYFILE="/etc/caddy/Caddyfile"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
 OUTPUT_FILE="/root/.naive.txt"
 CADDY_METHOD=""
+GO_INSTALLED_BY_SCRIPT=false
 
 gen_random_user() {
     head /dev/urandom | tr -dc 'a-z0-9' | head -c 8
@@ -201,6 +202,7 @@ install_build_deps() {
         rm -f /tmp/go.tar.gz
         export PATH="/usr/local/go/bin:${PATH}"
         echo 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/go.sh
+        GO_INSTALLED_BY_SCRIPT=true
     fi
 
     info "Go version: $(go version)"
@@ -290,6 +292,17 @@ get_caddy() {
         fi
         error "Both build and download failed. Cannot install Caddy."
     fi
+}
+
+# ----------------------------------------------------------
+# Clean up Go and build artifacts
+# ----------------------------------------------------------
+cleanup_go() {
+    info "Cleaning up Go and build artifacts..."
+    rm -rf /usr/local/go
+    rm -f /etc/profile.d/go.sh
+    rm -rf /root/go /root/.cache/go-build
+    info "Go removed."
 }
 
 # ----------------------------------------------------------
@@ -504,6 +517,7 @@ uninstall() {
     userdel caddy 2>/dev/null || true
     groupdel caddy 2>/dev/null || true
     rm -f "${OUTPUT_FILE}"
+    cleanup_go
 
     systemctl daemon-reload
     info "Uninstall complete."
@@ -520,6 +534,17 @@ fi
 interactive_setup
 install_deps
 get_caddy
+
+if [[ "${CADDY_METHOD}" == "build" || -d /usr/local/go ]]; then
+    if [[ "${GO_INSTALLED_BY_SCRIPT}" == "true" ]]; then
+        if prompt_confirm "Remove Go and build artifacts to save space?" "y"; then
+            cleanup_go
+        else
+            info "Go kept. You can remove it later with: rm -rf /usr/local/go /etc/profile.d/go.sh /root/go /root/.cache/go-build"
+        fi
+    fi
+fi
+
 setup_webroot
 generate_caddyfile
 setup_systemd
