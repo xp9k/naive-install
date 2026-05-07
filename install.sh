@@ -13,14 +13,17 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-CADDY_DIR="/opt/naiveproxy"
-CADDYFILE="/etc/caddy/Caddyfile"
-SERVICE_FILE="/etc/systemd/system/caddy.service"
+NAIVE_DIR="/opt/naiveproxy"
 OUTPUT_FILE="/root/.naive.txt"
 CADDY_RELEASE_URL="https://github.com/klzgrad/forwardproxy/releases/download/v2.10.0-naive/caddy-forwardproxy-naive.tar.xz"
 
 CADDY_METHOD=""
 GO_INSTALLED_BY_SCRIPT=false
+SERVICE_NAME=""
+SERVICE_USER=""
+CONFIG_DIR=""
+CADDYFILE=""
+SERVICE_FILE=""
 
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
@@ -113,6 +116,27 @@ interactive_setup() {
     prompt_input NAIVE_PORT "Listen port" "443"
 
     echo ""
+    echo -e "${BOLD}Service name:${NC}"
+    echo -e "  ${CYAN}1)${NC} naive  (more discreet, recommended)"
+    echo -e "  ${CYAN}2)${NC} caddy  (standard Caddy service name)"
+    echo ""
+    while true; do
+        echo -ne "${BOLD}Choose [1/2]${NC} (default: 1): "
+        read -r svc_choice
+        svc_choice="${svc_choice:-1}"
+        case "${svc_choice}" in
+            1) SERVICE_NAME="naive"; break ;;
+            2) SERVICE_NAME="caddy"; break ;;
+            *) echo "Please enter 1 or 2." ;;
+        esac
+    done
+
+    SERVICE_USER="${SERVICE_NAME}"
+    CONFIG_DIR="/etc/${SERVICE_NAME}"
+    CADDYFILE="${CONFIG_DIR}/Caddyfile"
+    SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+    echo ""
     echo -e "${BOLD}How to get Caddy with naive forwardproxy?${NC}"
     echo -e "  ${CYAN}1)${NC} Download prebuilt binary (fast, recommended)"
     echo -e "  ${CYAN}2)${NC} Build from source (slower, requires Go)"
@@ -130,12 +154,13 @@ interactive_setup() {
 
     echo ""
     echo -e "${BOLD}--- Configuration Summary ---${NC}"
-    echo -e "  Domain:    ${CYAN}${DOMAIN}${NC}"
-    echo -e "  Email:     ${CYAN}${EMAIL}${NC}"
-    echo -e "  Username:  ${CYAN}${NAIVE_USER}${NC}"
-    echo -e "  Password:  ${CYAN}${NAIVE_PASS}${NC}"
-    echo -e "  Web root:  ${CYAN}${WEB_ROOT}${NC}"
-    echo -e "  Port:      ${CYAN}${NAIVE_PORT}${NC}"
+    echo -e "  Domain:        ${CYAN}${DOMAIN}${NC}"
+    echo -e "  Email:         ${CYAN}${EMAIL}${NC}"
+    echo -e "  Username:      ${CYAN}${NAIVE_USER}${NC}"
+    echo -e "  Password:      ${CYAN}${NAIVE_PASS}${NC}"
+    echo -e "  Web root:      ${CYAN}${WEB_ROOT}${NC}"
+    echo -e "  Port:          ${CYAN}${NAIVE_PORT}${NC}"
+    echo -e "  Service name:  ${CYAN}${SERVICE_NAME}${NC}"
     echo ""
 
     if ! prompt_confirm "Proceed with installation?"; then
@@ -207,7 +232,7 @@ install_build_deps() {
 download_caddy() {
     info "Downloading prebuilt Caddy with naive forwardproxy..."
 
-    mkdir -p "${CADDY_DIR}"
+    mkdir -p "${NAIVE_DIR}"
 
     local archive="/tmp/caddy-forwardproxy-naive.tar.xz"
     rm -f "${archive}"
@@ -262,7 +287,7 @@ download_caddy() {
     fi
 
     info "Extracting archive (${file_size} bytes)..."
-    if ! tar -xJf "${archive}" -C "${CADDY_DIR}"; then
+    if ! tar -xJf "${archive}" -C "${NAIVE_DIR}"; then
         rm -f "${archive}"
         return 1
     fi
@@ -270,8 +295,8 @@ download_caddy() {
 
     local caddy_binary=""
     for f in \
-        "${CADDY_DIR}/caddy" \
-        "${CADDY_DIR}/caddy-forwardproxy-naive/caddy"
+        "${NAIVE_DIR}/caddy" \
+        "${NAIVE_DIR}/caddy-forwardproxy-naive/caddy"
     do
         if [[ -f "${f}" ]]; then
             caddy_binary="${f}"
@@ -280,20 +305,20 @@ download_caddy() {
     done
 
     if [[ -z "${caddy_binary}" ]]; then
-        caddy_binary="$(find "${CADDY_DIR}" -maxdepth 3 -type f -name 'caddy' 2>/dev/null | head -1)"
+        caddy_binary="$(find "${NAIVE_DIR}" -maxdepth 3 -type f -name 'caddy' 2>/dev/null | head -1)"
     fi
 
     if [[ -z "${caddy_binary}" ]]; then
         warn "Caddy binary not found after extraction."
-        find "${CADDY_DIR}" -type f 2>/dev/null | head -10
-        rm -rf "${CADDY_DIR}/caddy-forwardproxy-naive"
+        find "${NAIVE_DIR}" -type f 2>/dev/null | head -10
+        rm -rf "${NAIVE_DIR}/caddy-forwardproxy-naive"
         return 1
     fi
 
     info "Found binary: ${caddy_binary}"
     cp "${caddy_binary}" /usr/bin/caddy
     chmod +x /usr/bin/caddy
-    rm -rf "${CADDY_DIR}/caddy-forwardproxy-naive"
+    rm -rf "${NAIVE_DIR}/caddy-forwardproxy-naive"
 
     info "Caddy installed: $(/usr/bin/caddy version)"
     return 0
@@ -305,7 +330,7 @@ download_caddy() {
 build_caddy() {
     info "Building Caddy with naive forwardproxy (this may take a few minutes)..."
 
-    mkdir -p "${CADDY_DIR}"
+    mkdir -p "${NAIVE_DIR}"
     export PATH="/usr/local/go/bin:${PATH}"
 
     if ! command -v go &>/dev/null; then
@@ -314,13 +339,13 @@ build_caddy() {
 
     go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || return 1
 
-    cd "${CADDY_DIR}"
+    cd "${NAIVE_DIR}"
     ~/go/bin/xcaddy build \
         --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive \
-        --output "${CADDY_DIR}/caddy" || return 1
+        --output "${NAIVE_DIR}/caddy" || return 1
 
-    chmod +x "${CADDY_DIR}/caddy"
-    cp "${CADDY_DIR}/caddy" /usr/bin/caddy
+    chmod +x "${NAIVE_DIR}/caddy"
+    cp "${NAIVE_DIR}/caddy" /usr/bin/caddy
 
     info "Caddy built: $(/usr/bin/caddy version)"
     return 0
@@ -394,7 +419,7 @@ HTMLEOF
 generate_caddyfile() {
     info "Generating Caddyfile..."
 
-    mkdir -p /etc/caddy
+    mkdir -p "${CONFIG_DIR}"
 
     local port_block=":443"
     if [[ "${NAIVE_PORT}" != "443" ]]; then
@@ -426,43 +451,43 @@ ${port_block}, ${DOMAIN} {
 }
 CADDYEOF
 
-    chown -R caddy:caddy /etc/caddy 2>/dev/null || true
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}" 2>/dev/null || true
     info "Caddyfile written to ${CADDYFILE}"
 }
 
 # ----------------------------------------------------------
-# Create caddy user and systemd service
+# Create service user and systemd service
 # ----------------------------------------------------------
 setup_systemd() {
-    info "Setting up caddy user and systemd service..."
+    info "Setting up ${SERVICE_NAME} user and systemd service..."
 
-    if ! id -u caddy &>/dev/null; then
-        groupadd --system caddy
+    if ! id -u "${SERVICE_USER}" &>/dev/null; then
+        groupadd --system "${SERVICE_USER}"
         useradd --system \
-            --gid caddy \
+            --gid "${SERVICE_USER}" \
             --create-home \
-            --home-dir /var/lib/caddy \
+            --home-dir "/var/lib/${SERVICE_NAME}" \
             --shell /usr/sbin/nologin \
-            --comment "Caddy web server" \
-            caddy
+            --comment "NaiveProxy" \
+            "${SERVICE_USER}"
     fi
 
-    chown -R caddy:caddy /etc/caddy
-    chown -R caddy:caddy /var/lib/caddy 2>/dev/null || true
-    chown -R caddy:caddy "${WEB_ROOT}" 2>/dev/null || true
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}"
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" "/var/lib/${SERVICE_NAME}" 2>/dev/null || true
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" "${WEB_ROOT}" 2>/dev/null || true
 
     cat > "${SERVICE_FILE}" <<SVCEOF
 [Unit]
-Description=Caddy
+Description=NaiveProxy (${SERVICE_NAME})
 Documentation=https://caddyserver.com/docs/
 After=network.target network-online.target
 Requires=network-online.target
 
 [Service]
-User=caddy
-Group=caddy
-ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
-ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+ExecStart=/usr/bin/caddy run --environ --config ${CADDYFILE}
+ExecReload=/usr/bin/caddy reload --config ${CADDYFILE}
 TimeoutStopSec=5s
 LimitNOFILE=1048576
 LimitNPROC=512
@@ -477,12 +502,12 @@ SVCEOF
     setcap cap_net_bind_service=+ep /usr/bin/caddy
 
     systemctl daemon-reload
-    systemctl enable caddy
-    systemctl start caddy
+    systemctl enable "${SERVICE_NAME}"
+    systemctl start "${SERVICE_NAME}"
 
-    info "Caddy service started."
+    info "${SERVICE_NAME} service started."
     sleep 2
-    systemctl status caddy --no-pager || true
+    systemctl status "${SERVICE_NAME}" --no-pager || true
 }
 
 # ----------------------------------------------------------
@@ -529,6 +554,7 @@ output_info() {
   Port:          ${NAIVE_PORT}
   Username:      ${NAIVE_USER}
   Password:      ${NAIVE_PASS}
+  Service:       ${SERVICE_NAME}
 
   --- Connection strings ---
 
@@ -541,6 +567,13 @@ output_info() {
     \"listen\": \"socks://127.0.0.1:1080\",
     \"proxy\": \"${proxy_url}\"
   }
+
+  --- Manage service ---
+
+  systemctl start ${SERVICE_NAME}
+  systemctl stop ${SERVICE_NAME}
+  systemctl reload ${SERVICE_NAME}
+  systemctl status ${SERVICE_NAME}
 
 ============================================================
 "
@@ -556,7 +589,7 @@ output_info() {
 # Uninstall
 # ----------------------------------------------------------
 uninstall() {
-    echo -e "${YELLOW}This will completely remove NaiveProxy (Caddy + config + service + Go).${NC}"
+    echo -e "${YELLOW}This will completely remove NaiveProxy (service + config + binary + Go).${NC}"
     if ! prompt_confirm "Are you sure?" "n"; then
         echo "Aborted."
         exit 0
@@ -564,14 +597,14 @@ uninstall() {
 
     info "Uninstalling NaiveProxy..."
 
-    systemctl stop caddy 2>/dev/null || true
-    systemctl disable caddy 2>/dev/null || true
+    systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+    systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
     rm -f "${SERVICE_FILE}"
     rm -f /usr/bin/caddy
-    rm -rf "${CADDY_DIR}"
-    rm -rf /etc/caddy
-    userdel caddy 2>/dev/null || true
-    groupdel caddy 2>/dev/null || true
+    rm -rf "${NAIVE_DIR}"
+    rm -rf "${CONFIG_DIR}"
+    userdel "${SERVICE_USER}" 2>/dev/null || true
+    groupdel "${SERVICE_USER}" 2>/dev/null || true
     rm -f "${OUTPUT_FILE}"
     cleanup_go
 
@@ -583,6 +616,12 @@ uninstall() {
 # Main
 # ----------------------------------------------------------
 if [[ "${1:-}" == "uninstall" ]]; then
+    echo -e "${YELLOW}Note: service name required for uninstall.${NC}"
+    prompt_input SERVICE_NAME "Service name (caddy or naive)" "naive"
+    SERVICE_USER="${SERVICE_NAME}"
+    CONFIG_DIR="/etc/${SERVICE_NAME}"
+    CADDYFILE="${CONFIG_DIR}/Caddyfile"
+    SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
     uninstall
     exit 0
 fi
@@ -614,8 +653,8 @@ fi
 output_info
 
 info "Done!"
-info "Manage:   systemctl start caddy"
-info "          systemctl stop caddy"
-info "          systemctl reload caddy"
-info "          systemctl status caddy"
+info "Manage:   systemctl start ${SERVICE_NAME}"
+info "          systemctl stop ${SERVICE_NAME}"
+info "          systemctl reload ${SERVICE_NAME}"
+info "          systemctl status ${SERVICE_NAME}"
 info "Uninstall: $0 uninstall"

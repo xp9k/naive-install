@@ -27,24 +27,27 @@ bash <(wget -qO- https://raw.githubusercontent.com/xp9k/naive-install/main/insta
 ## Что делает скрипт
 
 1. Интерактивно запрашивает: домен, email, логин/пароль (или генерирует автоматически), порт, web-root
-2. Предлагает выбор: скачать готовый бинарник или собрать из исходников (при ошибке — пробует второй способ)
-3. При сборке из исходников спрашивает, удалить ли Go после установки для экономии места
-4. Устанавливает зависимости
-5. Скачивает/собирает Caddy с `forwardproxy@naive`
-6. Генерирует Caddyfile с `forward_proxy`, `probe_resistance`, маскировкой через `file_server`
-7. Создаёт systemd-сервис и пользователя `caddy`
-8. Спрашивает про открытие портов в файрволе
-9. Выводит данные подключения на экран и сохраняет в `/root/.naive.txt`
+2. Предлагает выбор имени сервиса: `naive` (более скрытный) или `caddy` (стандартный)
+3. Предлагает выбор: скачать готовый бинарник или собрать из исходников (при ошибке — пробует второй способ)
+4. При сборке из исходников спрашивает, удалить ли Go после установки для экономии места
+5. Устанавливает зависимости
+6. Скачивает/собирает Caddy с `forwardproxy@naive`
+7. Генерирует Caddyfile с `forward_proxy`, `probe_resistance`, маскировкой через `file_server`
+8. Создаёт systemd-сервис и пользователя с выбранным именем
+9. Спрашивает про открытие портов в файрволе
+10. Выводит данные подключения на экран и сохраняет в `/root/.naive.txt`
 
 ## Управление сервисом
 
+Имя сервиса — `naive` или `caddy` (по выбору при установке):
+
 ```bash
-systemctl start caddy      # запустить
-systemctl stop caddy       # остановить
-systemctl reload caddy     # перезагрузить конфиг
-systemctl status caddy     # статус
-systemctl enable caddy     # автозапуск
-systemctl disable caddy    # убрать из автозапуска
+systemctl start naive       # запустить
+systemctl stop naive        # остановить
+systemctl reload naive      # перезагрузить конфиг
+systemctl status naive      # статус
+systemctl enable naive      # автозапуск
+systemctl disable naive     # убрать из автозапуска
 ```
 
 ## Удаление
@@ -60,3 +63,5 @@ bash <(curl -sL https://raw.githubusercontent.com/xp9k/naive-install/main/instal
 ```bash
 bash install.sh uninstall
 ```
+
+Скрипт спросит имя сервиса для корректного удаления.
