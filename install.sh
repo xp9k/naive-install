@@ -21,6 +21,7 @@ CADDY_DIR="/opt/naiveproxy"
 CADDYFILE="/etc/caddy/Caddyfile"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
 OUTPUT_FILE="/root/.naive.txt"
+CADDY_METHOD=""
 
 gen_random_user() {
     head /dev/urandom | tr -dc 'a-z0-9' | head -c 8
@@ -118,6 +119,22 @@ interactive_setup() {
     prompt_input NAIVE_PORT "Listen port"                        "${PORT_DEFAULT}"
 
     echo ""
+    echo -e "${BOLD}How to get Caddy with naive forwardproxy?${NC}"
+    echo -e "  ${CYAN}1)${NC} Download prebuilt binary (fast, recommended)"
+    echo -e "  ${CYAN}2)${NC} Build from source (slower, requires Go)"
+    echo ""
+    while true; do
+        echo -ne "${BOLD}Choose [1/2]${NC} (default: 1): "
+        read -r method_choice
+        method_choice="${method_choice:-1}"
+        case "${method_choice}" in
+            1) CADDY_METHOD="download"; break ;;
+            2) CADDY_METHOD="build"; break ;;
+            *) echo "Please enter 1 or 2." ;;
+        esac
+    done
+
+    echo ""
     echo -e "${BOLD}--- Configuration Summary ---${NC}"
     echo -e "  Domain:    ${CYAN}${DOMAIN}${NC}"
     echo -e "  Email:     ${CYAN}${EMAIL}${NC}"
@@ -142,13 +159,30 @@ install_deps() {
 
     if command -v apt-get &>/dev/null; then
         apt-get update -y
+        apt-get install -y curl wget xz-utils
+    elif command -v yum &>/dev/null; then
+        yum install -y curl wget xz
+    elif command -v dnf &>/dev/null; then
+        dnf install -y curl wget xz
+    elif command -v pacman &>/dev/null; then
+        pacman -Sy --noconfirm curl wget xz
+    else
+        warn "Unsupported package manager. Trying to continue..."
+    fi
+}
+
+install_build_deps() {
+    info "Installing build dependencies..."
+
+    if command -v apt-get &>/dev/null; then
+        apt-get update -y
         apt-get install -y git curl wget xz-utils gcc make
     elif command -v yum &>/dev/null; then
-        yum install -y git curl wget gcc make
+        yum install -y git curl wget gcc make xz
     elif command -v dnf &>/dev/null; then
-        dnf install -y git curl wget gcc make
+        dnf install -y git curl wget gcc make xz
     elif command -v pacman &>/dev/null; then
-        pacman -Sy --noconfirm git curl wget gcc make
+        pacman -Sy --noconfirm git curl wget gcc make xz
     else
         warn "Unsupported package manager. Trying to continue..."
     fi
@@ -173,7 +207,39 @@ install_deps() {
 }
 
 # ----------------------------------------------------------
-# Build Caddy with naive forwardproxy
+# Download prebuilt Caddy with naive forwardproxy
+# ----------------------------------------------------------
+download_caddy() {
+    info "Downloading prebuilt Caddy with naive forwardproxy..."
+
+    mkdir -p "${CADDY_DIR}"
+
+    RELEASE_URL="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
+
+    if ! wget -q "${RELEASE_URL}" -O /tmp/caddy-forwardproxy-naive.tar.xz; then
+        rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+        return 1
+    fi
+
+    if ! tar -xJf /tmp/caddy-forwardproxy-naive.tar.xz -C "${CADDY_DIR}"; then
+        rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+        return 1
+    fi
+    rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+
+    if [[ ! -f "${CADDY_DIR}/caddy" ]]; then
+        return 1
+    fi
+
+    chmod +x "${CADDY_DIR}/caddy"
+    cp "${CADDY_DIR}/caddy" /usr/bin/caddy
+
+    info "Caddy installed: $(/usr/bin/caddy version)"
+    return 0
+}
+
+# ----------------------------------------------------------
+# Build Caddy with naive forwardproxy from source
 # ----------------------------------------------------------
 build_caddy() {
     info "Building Caddy with naive forwardproxy (this may take a few minutes)..."
@@ -181,17 +247,49 @@ build_caddy() {
     mkdir -p "${CADDY_DIR}"
     export PATH="/usr/local/go/bin:${PATH}"
 
-    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+    if ! command -v go &>/dev/null; then
+        return 1
+    fi
+
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest || return 1
 
     cd "${CADDY_DIR}"
     ~/go/bin/xcaddy build \
         --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive \
-        --output "${CADDY_DIR}/caddy"
+        --output "${CADDY_DIR}/caddy" || return 1
 
     chmod +x "${CADDY_DIR}/caddy"
     cp "${CADDY_DIR}/caddy" /usr/bin/caddy
 
     info "Caddy built: $(/usr/bin/caddy version)"
+    return 0
+}
+
+# ----------------------------------------------------------
+# Get Caddy (try chosen method, fallback to the other)
+# ----------------------------------------------------------
+get_caddy() {
+    if [[ "${CADDY_METHOD}" == "download" ]]; then
+        if download_caddy; then
+            return 0
+        fi
+        warn "Download failed. Trying to build from source..."
+        install_build_deps
+        if build_caddy; then
+            return 0
+        fi
+        error "Both download and build failed. Cannot install Caddy."
+    else
+        install_build_deps
+        if build_caddy; then
+            return 0
+        fi
+        warn "Build failed. Trying to download prebuilt binary..."
+        if download_caddy; then
+            return 0
+        fi
+        error "Both build and download failed. Cannot install Caddy."
+    fi
 }
 
 # ----------------------------------------------------------
@@ -421,7 +519,7 @@ fi
 
 interactive_setup
 install_deps
-build_caddy
+get_caddy
 setup_webroot
 generate_caddyfile
 setup_systemd

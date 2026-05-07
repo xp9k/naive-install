@@ -2,7 +2,7 @@
 
 Интерактивный скрипт для автоматической установки NaiveProxy на Linux-сервер.
 
-Собирает Caddy с naive-форком forwardproxy, настраивает systemd-сервис, TLS через Let's Encrypt, маскировочный веб-сайт, генерирует логин/пароль и выводит данные для подключения.
+Скачивает готовый Caddy с naive-форком forwardproxy, настраивает systemd-сервис, TLS через Let's Encrypt, маскировочный веб-сайт, генерирует логин/пароль и выводит данные для подключения.
 
 ## Требования
 
@@ -27,8 +27,8 @@ bash <(wget -qO- https://raw.githubusercontent.com/xp9k/naive-install/main/insta
 ## Что делает скрипт
 
 1. Интерактивно запрашивает: домен, email, логин/пароль (или генерирует автоматически), порт, web-root
-2. Устанавливает зависимости и Go (если нет)
-3. Собирает Caddy с `forwardproxy@naive` через xcaddy
+2. Устанавливает зависимости (curl, wget, xz)
+3. Скачивает готовый Caddy с `forwardproxy@naive` из GitHub Releases
 4. Генерирует Caddyfile с `forward_proxy`, `probe_resistance`, маскировкой через `file_server`
 5. Создаёт systemd-сервис и пользователя `caddy`
 6. Спрашивает про открытие портов в файрволе
