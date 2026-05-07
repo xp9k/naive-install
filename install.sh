@@ -557,5 +557,9 @@ fi
 
 output_info
 
-info "Done! Manage caddy: systemctl {start|stop|reload|status} caddy"
-info "To uninstall: $0 uninstall"
+info "Done!"
+info "Manage:   systemctl start caddy"
+info "          systemctl stop caddy"
+info "          systemctl reload caddy"
+info "          systemctl status caddy"
+info "Uninstall: $0 uninstall"
