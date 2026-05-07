@@ -13,16 +13,18 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
-
 CADDY_DIR="/opt/naiveproxy"
 CADDYFILE="/etc/caddy/Caddyfile"
 SERVICE_FILE="/etc/systemd/system/caddy.service"
 OUTPUT_FILE="/root/.naive.txt"
+CADDY_RELEASE_URL="https://github.com/klzgrad/forwardproxy/releases/download/v2.10.0-naive/caddy-forwardproxy-naive.tar.xz"
+
 CADDY_METHOD=""
 GO_INSTALLED_BY_SCRIPT=false
+
+info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 gen_random_user() {
     head /dev/urandom | tr -dc 'a-z0-9' | head -c 8
@@ -36,11 +38,7 @@ prompt_input() {
     local varname="$1" prompt_text="$2" default="${3:-}" is_password="${4:-false}"
     local display_default=""
     if [[ -n "${default}" ]]; then
-        if [[ "${is_password}" == "true" ]]; then
-            display_default=" [${DIM}${default}${NC}]"
-        else
-            display_default=" [${DIM}${default}${NC}]"
-        fi
+        display_default=" [${DIM}${default}${NC}]"
     fi
     while true; do
         echo -ne "${BOLD}${prompt_text}${NC}${display_default}: "
@@ -94,13 +92,8 @@ interactive_setup() {
     echo -e "${BOLD}Please provide the following settings:${NC}"
     echo ""
 
-    DOMAIN_DEFAULT=""
-    EMAIL_DEFAULT=""
-    WEBROOT_DEFAULT="/var/www/html"
-    PORT_DEFAULT="443"
-
-    prompt_input DOMAIN     "Domain name for TLS certificate"    "${DOMAIN_DEFAULT}"
-    prompt_input EMAIL      "Email for ACME (Let's Encrypt)"     "${EMAIL_DEFAULT}"
+    prompt_input DOMAIN "Domain name for TLS certificate" ""
+    prompt_input EMAIL  "Email for ACME (Let's Encrypt)" ""
 
     NAIVE_USER="$(gen_random_user)"
     NAIVE_PASS="$(gen_random_pass)"
@@ -116,8 +109,8 @@ interactive_setup() {
         info "Username and password auto-generated."
     fi
 
-    prompt_input WEB_ROOT   "Web root for camouflage site"      "${WEBROOT_DEFAULT}"
-    prompt_input NAIVE_PORT "Listen port"                        "${PORT_DEFAULT}"
+    prompt_input WEB_ROOT   "Web root for camouflage site" "/var/www/html"
+    prompt_input NAIVE_PORT "Listen port" "443"
 
     echo ""
     echo -e "${BOLD}How to get Caddy with naive forwardproxy?${NC}"
@@ -160,13 +153,13 @@ install_deps() {
 
     if command -v apt-get &>/dev/null; then
         apt-get update -y
-        apt-get install -y curl wget xz-utils
+        apt-get install -y curl wget xz-utils jq
     elif command -v yum &>/dev/null; then
-        yum install -y curl wget xz
+        yum install -y curl wget xz jq
     elif command -v dnf &>/dev/null; then
-        dnf install -y curl wget xz
+        dnf install -y curl wget xz jq
     elif command -v pacman &>/dev/null; then
-        pacman -Sy --noconfirm curl wget xz
+        pacman -Sy --noconfirm curl wget xz jq
     else
         warn "Unsupported package manager. Trying to continue..."
     fi
@@ -219,35 +212,38 @@ download_caddy() {
     local archive="/tmp/caddy-forwardproxy-naive.tar.xz"
     rm -f "${archive}"
 
-    local dl_url="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
+    local dl_url="${CADDY_RELEASE_URL}"
 
-    info "Resolving latest release URL via GitHub API..."
+    info "Resolving latest release URL..."
     local api_url="https://api.github.com/repos/klzgrad/forwardproxy/releases/latest"
     local resolved_url
-    resolved_url="$(curl -sL --connect-timeout 10 "${api_url}" 2>/dev/null \
-        | grep -oP '"browser_download_url":\s*"\K[^"]+caddy-forwardproxy-naive\.tar\.xz' \
-        | head -1)" || true
+    resolved_url="$(curl -sL --connect-timeout 10 --max-time 15 "${api_url}" 2>/dev/null \
+        | jq -r '.assets[] | select(.name=="caddy-forwardproxy-naive.tar.xz") | .browser_download_url' 2>/dev/null | head -1)" || true
     if [[ -n "${resolved_url}" ]]; then
         dl_url="${resolved_url}"
         info "Resolved to: ${dl_url}"
     else
-        info "Could not resolve via API, using direct URL."
+        info "Using hardcoded URL."
     fi
 
     local downloaded=false
 
     if command -v curl &>/dev/null; then
         info "Downloading with curl..."
-        if curl -fSL --retry 3 --connect-timeout 30 -o "${archive}" "${dl_url}"; then
+        if curl -fSL --retry 3 --connect-timeout 30 --max-time 120 -o "${archive}" "${dl_url}"; then
             downloaded=true
+        else
+            warn "curl download failed."
         fi
     fi
 
     if [[ "${downloaded}" != "true" ]] && command -v wget &>/dev/null; then
         info "Retrying with wget..."
         rm -f "${archive}"
-        if wget --tries=3 --timeout=30 -q --show-progress "${dl_url}" -O "${archive}"; then
+        if wget --tries=3 --timeout=60 -q --show-progress "${dl_url}" -O "${archive}"; then
             downloaded=true
+        else
+            warn "wget download failed."
         fi
     fi
 
@@ -256,7 +252,16 @@ download_caddy() {
         return 1
     fi
 
-    info "Extracting archive..."
+    local file_size
+    file_size="$(stat -c%s "${archive}" 2>/dev/null || stat -f%z "${archive}" 2>/dev/null || echo 0)"
+    if [[ "${file_size}" -lt 1000 ]]; then
+        warn "Downloaded file is too small (${file_size} bytes), likely an error page."
+        head -5 "${archive}" 2>/dev/null
+        rm -f "${archive}"
+        return 1
+    fi
+
+    info "Extracting archive (${file_size} bytes)..."
     if ! tar -xJf "${archive}" -C "${CADDY_DIR}"; then
         rm -f "${archive}"
         return 1
@@ -275,15 +280,20 @@ download_caddy() {
     done
 
     if [[ -z "${caddy_binary}" ]]; then
-        caddy_binary="$(find "${CADDY_DIR}" -maxdepth 3 -type f -executable -name 'caddy*' 2>/dev/null | head -1)"
+        caddy_binary="$(find "${CADDY_DIR}" -maxdepth 3 -type f -name 'caddy' 2>/dev/null | head -1)"
     fi
 
     if [[ -z "${caddy_binary}" ]]; then
+        warn "Caddy binary not found after extraction."
+        find "${CADDY_DIR}" -type f 2>/dev/null | head -10
+        rm -rf "${CADDY_DIR}/caddy-forwardproxy-naive"
         return 1
     fi
 
+    info "Found binary: ${caddy_binary}"
     cp "${caddy_binary}" /usr/bin/caddy
     chmod +x /usr/bin/caddy
+    rm -rf "${CADDY_DIR}/caddy-forwardproxy-naive"
 
     info "Caddy installed: $(/usr/bin/caddy version)"
     return 0
@@ -503,11 +513,8 @@ open_firewall() {
 output_info() {
     SERVER_IP="$(curl -s4 --connect-timeout 5 ifconfig.me || curl -s4 --connect-timeout 5 icanhazip.com || echo 'YOUR_SERVER_IP')"
 
-    local scheme="https"
-    [[ "${NAIVE_PORT}" != "443" ]] && scheme="https"
-    
-    local proxy_url="${scheme}://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}"
-    [[ "${NAIVE_PORT}" != "443" ]] && proxy_url="${scheme}://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}:${NAIVE_PORT}"
+    local proxy_url="https://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}"
+    [[ "${NAIVE_PORT}" != "443" ]] && proxy_url="https://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}:${NAIVE_PORT}"
 
     local quic_url="quic://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}"
     [[ "${NAIVE_PORT}" != "443" ]] && quic_url="quic://${NAIVE_USER}:${NAIVE_PASS}@${DOMAIN}:${NAIVE_PORT}"
@@ -549,7 +556,7 @@ output_info() {
 # Uninstall
 # ----------------------------------------------------------
 uninstall() {
-    echo -e "${YELLOW}This will completely remove NaiveProxy (Caddy + config + service).${NC}"
+    echo -e "${YELLOW}This will completely remove NaiveProxy (Caddy + config + service + Go).${NC}"
     if ! prompt_confirm "Are you sure?" "n"; then
         echo "Aborted."
         exit 0
@@ -589,7 +596,7 @@ if [[ "${CADDY_METHOD}" == "build" || -d /usr/local/go ]]; then
         if prompt_confirm "Remove Go and build artifacts to save space?" "y"; then
             cleanup_go
         else
-            info "Go kept. You can remove it later with: rm -rf /usr/local/go /etc/profile.d/go.sh /root/go /root/.cache/go-build"
+            info "Go kept. Remove later: rm -rf /usr/local/go /etc/profile.d/go.sh /root/go /root/.cache/go-build"
         fi
     fi
 fi
