@@ -218,9 +218,24 @@ download_caddy() {
 
     RELEASE_URL="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
 
-    if ! wget -q "${RELEASE_URL}" -O /tmp/caddy-forwardproxy-naive.tar.xz; then
-        rm -f /tmp/caddy-forwardproxy-naive.tar.xz
-        return 1
+    rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+
+    if command -v wget &>/dev/null; then
+        wget -q --show-progress "${RELEASE_URL}" -O /tmp/caddy-forwardproxy-naive.tar.xz || {
+            rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+            warn "wget download failed, trying curl..."
+            if ! curl -fSL -o /tmp/caddy-forwardproxy-naive.tar.xz "${RELEASE_URL}"; then
+                rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+                return 1
+            fi
+        }
+    elif command -v curl &>/dev/null; then
+        if ! curl -fSL -o /tmp/caddy-forwardproxy-naive.tar.xz "${RELEASE_URL}"; then
+            rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+            return 1
+        fi
+    else
+        error "Neither wget nor curl found."
     fi
 
     if ! tar -xJf /tmp/caddy-forwardproxy-naive.tar.xz -C "${CADDY_DIR}"; then
@@ -229,12 +244,27 @@ download_caddy() {
     fi
     rm -f /tmp/caddy-forwardproxy-naive.tar.xz
 
-    if [[ ! -f "${CADDY_DIR}/caddy" ]]; then
+    local caddy_binary=""
+    for f in \
+        "${CADDY_DIR}/caddy" \
+        "${CADDY_DIR}/caddy-forwardproxy-naive/caddy" \
+        "${CADDY_DIR}/caddy-forwardproxy-naive"
+    do
+        if [[ -f "${f}" ]]; then
+            caddy_binary="${f}"
+            break
+        fi
+    done
+
+    if [[ -z "${caddy_binary}" ]]; then
+        caddy_binary="$(find "${CADDY_DIR}" -maxdepth 3 -type f -executable -name 'caddy*' 2>/dev/null | head -1)"
+    fi
+
+    if [[ -z "${caddy_binary}" ]]; then
         return 1
     fi
 
-    chmod +x "${CADDY_DIR}/caddy"
-    cp "${CADDY_DIR}/caddy" /usr/bin/caddy
+    cp "${caddy_binary}" /usr/bin/caddy
 
     info "Caddy installed: $(/usr/bin/caddy version)"
     return 0
