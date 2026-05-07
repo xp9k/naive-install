@@ -216,39 +216,57 @@ download_caddy() {
 
     mkdir -p "${CADDY_DIR}"
 
-    RELEASE_URL="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
+    local archive="/tmp/caddy-forwardproxy-naive.tar.xz"
+    rm -f "${archive}"
 
-    rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+    local dl_url="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
 
-    if command -v wget &>/dev/null; then
-        wget -q --show-progress "${RELEASE_URL}" -O /tmp/caddy-forwardproxy-naive.tar.xz || {
-            rm -f /tmp/caddy-forwardproxy-naive.tar.xz
-            warn "wget download failed, trying curl..."
-            if ! curl -fSL -o /tmp/caddy-forwardproxy-naive.tar.xz "${RELEASE_URL}"; then
-                rm -f /tmp/caddy-forwardproxy-naive.tar.xz
-                return 1
-            fi
-        }
-    elif command -v curl &>/dev/null; then
-        if ! curl -fSL -o /tmp/caddy-forwardproxy-naive.tar.xz "${RELEASE_URL}"; then
-            rm -f /tmp/caddy-forwardproxy-naive.tar.xz
-            return 1
-        fi
+    info "Resolving latest release URL via GitHub API..."
+    local api_url="https://api.github.com/repos/klzgrad/forwardproxy/releases/latest"
+    local resolved_url
+    resolved_url="$(curl -sL --connect-timeout 10 "${api_url}" 2>/dev/null \
+        | grep -oP '"browser_download_url":\s*"\K[^"]+caddy-forwardproxy-naive\.tar\.xz' \
+        | head -1)" || true
+    if [[ -n "${resolved_url}" ]]; then
+        dl_url="${resolved_url}"
+        info "Resolved to: ${dl_url}"
     else
-        error "Neither wget nor curl found."
+        info "Could not resolve via API, using direct URL."
     fi
 
-    if ! tar -xJf /tmp/caddy-forwardproxy-naive.tar.xz -C "${CADDY_DIR}"; then
-        rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+    local downloaded=false
+
+    if command -v curl &>/dev/null; then
+        info "Downloading with curl..."
+        if curl -fSL --retry 3 --connect-timeout 30 -o "${archive}" "${dl_url}"; then
+            downloaded=true
+        fi
+    fi
+
+    if [[ "${downloaded}" != "true" ]] && command -v wget &>/dev/null; then
+        info "Retrying with wget..."
+        rm -f "${archive}"
+        if wget --tries=3 --timeout=30 -q --show-progress "${dl_url}" -O "${archive}"; then
+            downloaded=true
+        fi
+    fi
+
+    if [[ "${downloaded}" != "true" ]]; then
+        rm -f "${archive}"
         return 1
     fi
-    rm -f /tmp/caddy-forwardproxy-naive.tar.xz
+
+    info "Extracting archive..."
+    if ! tar -xJf "${archive}" -C "${CADDY_DIR}"; then
+        rm -f "${archive}"
+        return 1
+    fi
+    rm -f "${archive}"
 
     local caddy_binary=""
     for f in \
         "${CADDY_DIR}/caddy" \
-        "${CADDY_DIR}/caddy-forwardproxy-naive/caddy" \
-        "${CADDY_DIR}/caddy-forwardproxy-naive"
+        "${CADDY_DIR}/caddy-forwardproxy-naive/caddy"
     do
         if [[ -f "${f}" ]]; then
             caddy_binary="${f}"
@@ -265,6 +283,7 @@ download_caddy() {
     fi
 
     cp "${caddy_binary}" /usr/bin/caddy
+    chmod +x /usr/bin/caddy
 
     info "Caddy installed: $(/usr/bin/caddy version)"
     return 0
